@@ -63,6 +63,7 @@ type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => {
 
 type BarcodeImageReader = {
   decodeFromImageUrl(url: string): Promise<{ getText(): string }>;
+  decode(element: HTMLVideoElement): { getText(): string };
 };
 
 type ThemeName = "warm" | "classic";
@@ -991,41 +992,124 @@ function loadImage(file: File) {
 async function scanBarcodeIntoInput(selector: string) {
   const barcodeInput = document.querySelector<HTMLInputElement>(selector);
   if (!barcodeInput) return;
-  const BarcodeDetectorClass = (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
-  if (!BarcodeDetectorClass || !navigator.mediaDevices?.getUserMedia) {
+  if (isIOSStandalonePWA()) {
+    showError("iOS 桌面应用模式下摄像头预览可能黑屏，已使用拍照识别。");
+    return scanBarcodeFromPhoto(barcodeInput);
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
     return scanBarcodeFromPhoto(barcodeInput);
   }
 
   let stream: MediaStream | null = null;
   let overlay: HTMLDivElement | null = null;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
     const preview = createScanPreview();
     overlay = preview.overlay;
     const video = preview.video;
-    video.srcObject = stream;
-    video.muted = true;
-    video.playsInline = true;
-    await video.play();
-    const detector = new BarcodeDetectorClass({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 10000) {
-      if (preview.cancelled()) return "";
-      const codes = await detector.detect(video);
-      if (codes[0]?.rawValue) {
-        barcodeInput.value = codes[0].rawValue;
-        return codes[0].rawValue;
+    stream = await openCameraForPreview(video);
+    const BarcodeDetectorClass = (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
+    if (BarcodeDetectorClass) {
+      const detector = new BarcodeDetectorClass({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 10000) {
+        if (preview.cancelled()) return "";
+        const codes = await detector.detect(video);
+        if (codes[0]?.rawValue) {
+          barcodeInput.value = codes[0].rawValue;
+          return codes[0].rawValue;
+        }
+        await wait(250);
       }
-      await wait(250);
+    } else {
+      const code = await scanVideoWithZXing(stream, video, preview.cancelled);
+      if (code) {
+        barcodeInput.value = code;
+        return code;
+      }
     }
     showError("没有识别到条码，可以调整距离后再试，或手动输入。");
   } catch {
+    overlay?.remove();
+    stream?.getTracks().forEach((track) => track.stop());
+    showError("当前设备无法显示摄像头预览，已切换为拍照识别。");
     return scanBarcodeFromPhoto(barcodeInput);
   } finally {
     stream?.getTracks().forEach((track) => track.stop());
     overlay?.remove();
   }
   return "";
+}
+
+async function scanVideoWithZXing(stream: MediaStream, video: HTMLVideoElement, cancelled: () => boolean) {
+  const reader = await loadImageBarcodeReader();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 10000) {
+    if (cancelled() || !stream.active) return "";
+    try {
+      const result = reader.decode(video);
+      if (result?.getText()) return result.getText();
+    } catch {
+      // Most frames do not contain a decodable barcode; keep scanning.
+    }
+    await wait(250);
+  }
+  return "";
+}
+
+async function attachStreamToPreview(video: HTMLVideoElement, stream: MediaStream) {
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute("muted", "");
+  video.setAttribute("autoplay", "");
+  video.setAttribute("playsinline", "");
+  video.srcObject = stream;
+  await new Promise<void>((resolve) => {
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      resolve();
+      return;
+    }
+    video.onloadedmetadata = () => resolve();
+  });
+  await video.play();
+}
+
+async function openCameraForPreview(video: HTMLVideoElement) {
+  const attempts: MediaStreamConstraints[] = [
+    { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+    { video: { facingMode: "environment" }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastError: unknown;
+  for (const constraints of attempts) {
+    let candidate: MediaStream | null = null;
+    try {
+      candidate = await navigator.mediaDevices.getUserMedia(constraints);
+      await attachStreamToPreview(video, candidate);
+      if (await waitForVideoFrame(video)) {
+        return candidate;
+      }
+      lastError = new Error("camera opened but no video frame");
+    } catch (err) {
+      lastError = err;
+    }
+    candidate?.getTracks().forEach((track) => track.stop());
+    video.pause();
+    video.srcObject = null;
+    await wait(150);
+  }
+  throw lastError || new Error("无法打开摄像头预览");
+}
+
+async function waitForVideoFrame(video: HTMLVideoElement) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1800) {
+    if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return true;
+    }
+    await wait(100);
+  }
+  return false;
 }
 
 function createScanPreview() {
@@ -1159,6 +1243,12 @@ function readTheme(): ThemeName {
 
 function applyTheme(theme: ThemeName) {
   document.body.dataset.theme = theme;
+}
+
+function isIOSStandalonePWA() {
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return isIOS && (nav.standalone === true || window.matchMedia("(display-mode: standalone)").matches);
 }
 
 function empty(text: string) {
