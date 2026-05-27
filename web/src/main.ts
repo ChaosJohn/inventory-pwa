@@ -1260,7 +1260,7 @@ function fmt(n: number) {
 }
 
 function fmtMoney(n: number) {
-  return `${Number(n || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 人民币`;
+  return `¥ ${Number(n || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function escapeHtml(raw: string) {
