@@ -23,6 +23,9 @@ func main() {
 	dbPath := flag.String("db", "data/inventory.db", "SQLite database path")
 	staticDir := flag.String("static", "web/dist", "static frontend directory")
 	uploadDir := flag.String("uploads", "data/uploads", "upload directory")
+	tlsEnabled := flag.Bool("tls", false, "enable HTTPS using the default certificate files in ssl/")
+	certFile := flag.String("cert", "", "TLS certificate file")
+	keyFile := flag.String("key", "", "TLS private key file")
 	flag.Parse()
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -56,6 +59,18 @@ func main() {
 		UploadDir: *uploadDir,
 	})
 
+	if *tlsEnabled && (*certFile == "" || *keyFile == "") {
+		*certFile = firstNonEmpty(*certFile, "ssl/x.chaosjohn.com_ecc/fullchain.cer")
+		*keyFile = firstNonEmpty(*keyFile, "ssl/x.chaosjohn.com_ecc/x.chaosjohn.com.key")
+	}
+	if *certFile != "" || *keyFile != "" {
+		if *certFile == "" || *keyFile == "" {
+			log.Fatal("both -cert and -key are required for HTTPS")
+		}
+		log.Printf("listening on https://localhost%s", normalizeAddr(*addr))
+		log.Fatal(http.ListenAndServeTLS(*addr, *certFile, *keyFile, server.Routes()))
+	}
+
 	log.Printf("listening on http://localhost%s", normalizeAddr(*addr))
 	log.Fatal(http.ListenAndServe(*addr, server.Routes()))
 }
@@ -84,4 +99,13 @@ func normalizeAddr(addr string) string {
 		return addr
 	}
 	return "://" + addr
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

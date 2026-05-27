@@ -32,6 +32,26 @@ INVENTORY_ADMIN_PASSWORD=admin123 go run ./cmd/server -addr :8080
 http://localhost:8080
 ```
 
+如果需要启用 HTTPS，并且证书放在默认目录 `ssl/x.chaosjohn.com_ecc/`：
+
+```bash
+INVENTORY_ADMIN_PASSWORD=admin123 go run ./cmd/server -addr :8443 -tls
+```
+
+也可以显式指定证书和私钥：
+
+```bash
+INVENTORY_ADMIN_PASSWORD=admin123 go run ./cmd/server -addr :8443 \
+  -cert ssl/x.chaosjohn.com_ecc/fullchain.cer \
+  -key ssl/x.chaosjohn.com_ecc/x.chaosjohn.com.key
+```
+
+然后访问：
+
+```text
+https://localhost:8443
+```
+
 如果没有设置 `INVENTORY_ADMIN_PASSWORD`，首次启动会在终端打印一个随机 admin 密码。
 
 ## 数据
