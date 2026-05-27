@@ -66,6 +66,7 @@ type BarcodeImageReader = {
 };
 
 type ThemeName = "warm" | "classic";
+type ViewName = "home" | "items" | "locations" | "scan" | "settings" | "accounts";
 
 let imageBarcodeReaderPromise: Promise<BarcodeImageReader> | null = null;
 
@@ -81,9 +82,15 @@ let showItemForm = false;
 let showItemEditForm = false;
 let showLocationForm = false;
 let editingLocationID: number | null = null;
-let activeView: "home" | "items" | "locations" | "scan" | "settings" | "accounts" = "home";
+let activeView: ViewName = "home";
 let pendingRequests = 0;
 let currentTheme: ThemeName = readTheme();
+let suppressHistoryUpdate = false;
+
+type AppHistoryState = {
+  view: ViewName;
+  itemId?: number | null;
+};
 
 async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   beginNetwork();
@@ -119,6 +126,7 @@ async function boot() {
       activeView = "home";
       await loadData();
     }
+    replaceHistoryState();
     render();
   } catch {
     renderLogin();
@@ -193,7 +201,7 @@ function title() {
   return { home: "库存总览", items: "物品管理", locations: "存放地点", scan: "快速查找", settings: "设置", accounts: "账号管理" }[activeView];
 }
 
-function tab(view: typeof activeView, label: string) {
+function tab(view: ViewName, label: string) {
   return `<button data-view="${view}" class="${activeView === view ? "active" : ""}">${label}</button>`;
 }
 
@@ -505,10 +513,7 @@ function renderSearchResults(raw: string) {
   result.innerHTML = matches.length ? `<div class="list">${matches.map(itemCard).join("")}</div>` : `<p class="hint">没有匹配到，可以在“物品”里新增或补充条码。</p>`;
   result.querySelectorAll<HTMLElement>("[data-item]").forEach((el) => {
     el.onclick = async () => {
-      selectedItem = Number(el.dataset.item);
-      activeView = "items";
-      render();
-      await renderItemDetail(selectedItem);
+      await openItem(Number(el.dataset.item));
     };
   });
 }
@@ -516,16 +521,7 @@ function renderSearchResults(raw: string) {
 function bindGlobal() {
   document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((btn) => {
     btn.onclick = () => {
-      activeView = btn.dataset.view as typeof activeView;
-      if (currentUser?.role === "admin") activeView = "accounts";
-      selectedItem = null;
-      showItemEditForm = false;
-      if (activeView !== "items") showItemForm = false;
-      if (activeView !== "locations") {
-        showLocationForm = false;
-        editingLocationID = null;
-      }
-      render();
+      navigateTo(btn.dataset.view as ViewName);
     };
   });
   document.querySelector("#refreshBtn")?.addEventListener("click", async () => {
@@ -607,20 +603,15 @@ function bindGlobal() {
   });
   document.querySelectorAll<HTMLElement>("[data-item]").forEach((el) => {
     el.onclick = async () => {
-      selectedItem = Number(el.dataset.item);
-      activeView = "items";
-      showItemEditForm = false;
-      render();
-      await renderItemDetail(selectedItem);
+      await openItem(Number(el.dataset.item));
     };
   });
   document.querySelectorAll<HTMLButtonElement>("[data-edit-item]").forEach((btn) => {
     btn.onclick = async (event) => {
       event.stopPropagation();
-      selectedItem = Number(btn.dataset.editItem);
+      const itemId = Number(btn.dataset.editItem);
       showItemEditForm = true;
-      render();
-      await renderItemDetail(selectedItem);
+      await openItem(itemId);
     };
   });
   document.querySelectorAll<HTMLButtonElement>("[data-delete-item]").forEach((btn) => {
@@ -741,9 +732,7 @@ function bindForms() {
 
 function bindDetailForms(itemId: number) {
   document.querySelector("#backBtn")?.addEventListener("click", () => {
-    selectedItem = null;
-    showItemEditForm = false;
-    render();
+    navigateTo("items");
   });
   document.querySelector("#toggleEditItemBtn")?.addEventListener("click", async () => {
     showItemEditForm = !showItemEditForm;
@@ -802,6 +791,66 @@ function bindDetailForms(itemId: number) {
     });
   });
 }
+
+function navigateTo(view: ViewName, options: { replace?: boolean } = {}) {
+  activeView = currentUser?.role === "admin" ? "accounts" : view;
+  selectedItem = null;
+  showItemEditForm = false;
+  if (activeView !== "items") showItemForm = false;
+  if (activeView !== "locations") {
+    showLocationForm = false;
+    editingLocationID = null;
+  }
+  render();
+  updateHistoryState(options.replace);
+}
+
+async function openItem(itemId: number, options: { replace?: boolean } = {}) {
+  activeView = "items";
+  selectedItem = itemId;
+  showLocationForm = false;
+  editingLocationID = null;
+  render();
+  updateHistoryState(options.replace);
+  await renderItemDetail(itemId);
+}
+
+function currentHistoryState(): AppHistoryState {
+  return { view: activeView, itemId: selectedItem };
+}
+
+function replaceHistoryState() {
+  history.replaceState(currentHistoryState(), "", location.href);
+}
+
+function updateHistoryState(replace = false) {
+  if (suppressHistoryUpdate) return;
+  const state = currentHistoryState();
+  if (replace) {
+    history.replaceState(state, "", location.href);
+  } else {
+    history.pushState(state, "", location.href);
+  }
+}
+
+window.addEventListener("popstate", async (event) => {
+  const state = (event.state || { view: "home", itemId: null }) as AppHistoryState;
+  suppressHistoryUpdate = true;
+  try {
+    activeView = currentUser?.role === "admin" ? "accounts" : state.view || "home";
+    selectedItem = state.itemId || null;
+    showItemForm = false;
+    showItemEditForm = false;
+    showLocationForm = false;
+    editingLocationID = null;
+    render();
+    if (activeView === "items" && selectedItem) {
+      await renderItemDetail(selectedItem);
+    }
+  } finally {
+    suppressHistoryUpdate = false;
+  }
+});
 
 function form(id: string, handler: (fd: FormData) => Promise<void>) {
   const el = document.querySelector<HTMLFormElement>(`#${id}`);
@@ -948,9 +997,12 @@ async function scanBarcodeIntoInput(selector: string) {
   }
 
   let stream: MediaStream | null = null;
-  const video = document.createElement("video");
+  let overlay: HTMLDivElement | null = null;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    const preview = createScanPreview();
+    overlay = preview.overlay;
+    const video = preview.video;
     video.srcObject = stream;
     video.muted = true;
     video.playsInline = true;
@@ -958,6 +1010,7 @@ async function scanBarcodeIntoInput(selector: string) {
     const detector = new BarcodeDetectorClass({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
     const startedAt = Date.now();
     while (Date.now() - startedAt < 10000) {
+      if (preview.cancelled()) return "";
       const codes = await detector.detect(video);
       if (codes[0]?.rawValue) {
         barcodeInput.value = codes[0].rawValue;
@@ -970,8 +1023,35 @@ async function scanBarcodeIntoInput(selector: string) {
     return scanBarcodeFromPhoto(barcodeInput);
   } finally {
     stream?.getTracks().forEach((track) => track.stop());
+    overlay?.remove();
   }
   return "";
+}
+
+function createScanPreview() {
+  let isCancelled = false;
+  const overlay = document.createElement("div");
+  overlay.className = "scan-overlay";
+  overlay.innerHTML = `
+    <div class="scan-panel">
+      <div class="scan-header">
+        <div>
+          <strong>对准条码</strong>
+          <span>让条码尽量放在框内，保持清晰和稳定。</span>
+        </div>
+        <button type="button" class="small" data-scan-cancel>取消</button>
+      </div>
+      <div class="scan-video-wrap">
+        <video class="scan-video" autoplay muted playsinline></video>
+        <div class="scan-frame"></div>
+      </div>
+    </div>`;
+  document.body.append(overlay);
+  overlay.querySelector<HTMLButtonElement>("[data-scan-cancel]")?.addEventListener("click", () => {
+    isCancelled = true;
+  });
+  const video = overlay.querySelector<HTMLVideoElement>("video")!;
+  return { overlay, video, cancelled: () => isCancelled };
 }
 
 function scanBarcodeFromPhoto(barcodeInput: HTMLInputElement) {

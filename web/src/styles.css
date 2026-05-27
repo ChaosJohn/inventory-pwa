@@ -55,6 +55,15 @@ h2 { font-size: 18px; margin-bottom: 14px; }
 .error-toast { background: #fff6f3; border: 1px solid rgb(182 75 59 / 36%); border-left: 5px solid var(--red); border-radius: 8px; box-shadow: 0 18px 45px rgb(23 35 31 / 18%); color: #6d241a; font-weight: 800; left: 50%; line-height: 1.45; max-width: min(520px, calc(100% - 28px)); padding: 12px 14px; position: fixed; top: 72px; transform: translateX(-50%); z-index: 21; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.scan-overlay { align-items: center; background: rgb(20 16 12 / 78%); display: grid; inset: 0; padding: 18px; position: fixed; z-index: 30; }
+.scan-panel { background: #120f0c; border: 1px solid rgb(255 255 255 / 16%); border-radius: 22px; box-shadow: 0 24px 80px rgb(0 0 0 / 42%); color: white; display: grid; gap: 14px; margin: 0 auto; max-width: 560px; overflow: hidden; padding: 14px; width: min(100%, 560px); }
+.scan-header { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.scan-header strong, .scan-header span { display: block; }
+.scan-header span { color: rgb(255 255 255 / 72%); font-size: 13px; line-height: 1.4; margin-top: 3px; }
+.scan-video-wrap { aspect-ratio: 3 / 4; background: #050403; border-radius: 18px; max-height: 70vh; overflow: hidden; position: relative; }
+.scan-video { height: 100%; object-fit: cover; width: 100%; }
+.scan-frame { border: 3px solid rgb(255 250 241 / 88%); border-radius: 18px; box-shadow: 0 0 0 999px rgb(0 0 0 / 25%); height: 34%; left: 10%; position: absolute; right: 10%; top: 33%; }
+
 .login { min-height: 100vh; display: grid; place-items: center; padding: 24px; transform: translateY(-6vh); }
 .login-panel { width: min(420px, 100%); background: linear-gradient(180deg, #fffdf8, #fff4e5); border: 1px solid rgb(234 213 183 / 86%); border-radius: 24px; padding: 28px; box-shadow: 0 24px 60px rgb(126 83 49 / 18%); }
 .eyebrow { color: var(--green); text-transform: uppercase; letter-spacing: 0; font-size: 12px; font-weight: 800; }
