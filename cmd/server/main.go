@@ -55,8 +55,9 @@ func main() {
 	}
 
 	server := app.NewServer(st, app.Config{
-		StaticDir: *staticDir,
-		UploadDir: *uploadDir,
+		StaticDir:  *staticDir,
+		UploadDir:  *uploadDir,
+		TLSEnabled: *tlsEnabled || *certFile != "" || *keyFile != "",
 	})
 
 	if *tlsEnabled && (*certFile == "" || *keyFile == "") {
