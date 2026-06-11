@@ -19,8 +19,9 @@ import (
 )
 
 type Config struct {
-	StaticDir string
-	UploadDir string
+	StaticDir  string
+	UploadDir  string
+	TLSEnabled bool
 }
 
 type Server struct {
@@ -36,6 +37,7 @@ func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(s.securityHeaders)
 
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
@@ -74,6 +76,18 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if s.cfg.TLSEnabled {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Login    string `json:"login"`
@@ -107,7 +121,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.DeleteExpiredSessions(time.Now())
-	http.SetCookie(w, &http.Cookie{Name: "inventory_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+	http.SetCookie(w, &http.Cookie{Name: "inventory_session", Value: token, Path: "/", HttpOnly: true, Secure: s.cfg.TLSEnabled, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
 	writeJSON(w, u)
 }
 
