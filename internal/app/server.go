@@ -319,6 +319,10 @@ func (s *Server) uploadBatchPhoto(w http.ResponseWriter, r *http.Request) {
 	respond(w, map[string]string{"photoPath": publicPath}, err)
 }
 
+var allowedImageExt = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
+}
+
 func (s *Server) saveUploadedImage(w http.ResponseWriter, r *http.Request, kind string, prefix string) (string, string, int64, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
@@ -352,12 +356,26 @@ func (s *Server) saveUploadedImage(w http.ResponseWriter, r *http.Request, kind 
 		return "", "", 0, err
 	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
+	if !allowedImageExt[ext] {
 		ext = ".jpg"
 	}
 	name := prefix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ext
 	dstPath := filepath.Join(dir, name)
-	dst, err := os.Create(dstPath)
+	absDst, err := filepath.Abs(dstPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "无效的文件路径")
+		return "", "", 0, err
+	}
+	absUpload, err := filepath.Abs(s.cfg.UploadDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return "", "", 0, err
+	}
+	if !strings.HasPrefix(absDst, absUpload+string(filepath.Separator)) {
+		writeError(w, http.StatusBadRequest, "无效的文件路径")
+		return "", "", 0, errors.New("path traversal detected")
+	}
+	dst, err := os.Create(absDst)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return "", "", 0, err
@@ -466,12 +484,18 @@ func validPhone(raw string) bool {
 
 func spaFileServer(dir string) http.Handler {
 	fs := http.FileServer(http.Dir(dir))
+	absDir, _ := filepath.Abs(dir)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := filepath.Join(dir, filepath.Clean(r.URL.Path))
+		cleaned := filepath.Clean(r.URL.Path)
+		path := filepath.Join(absDir, cleaned)
+		if !strings.HasPrefix(path, absDir+string(filepath.Separator)) && path != absDir {
+			http.NotFound(w, r)
+			return
+		}
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			fs.ServeHTTP(w, r)
 			return
 		}
-		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		http.ServeFile(w, r, filepath.Join(absDir, "index.html"))
 	})
 }
